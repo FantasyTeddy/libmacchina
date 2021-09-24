@@ -140,16 +140,18 @@ impl GeneralReadout for NetBSDGeneralReadout {
             .expect("ERROR: \"sysctl\" process stdout was not valid UTF-8");
 
         if backlight.is_empty() {
-                 return Err(ReadoutError::Other(String::from(
-                    "Could not obtain backlight value through sysctl, is ACPIVGA driver installed?",
-                )));
+            return Err(ReadoutError::Other(String::from(
+                "Could not obtain backlight value through sysctl, is ACPIVGA driver installed?",
+            )));
         }
-        
+
         if let Ok(val) = backlight.parse::<usize>() {
             return Ok(val);
         }
 
-        Err(ReadoutError::Other(String::from("Could not parse the obtained backlight value.")))
+        Err(ReadoutError::Other(String::from(
+            "Could not parse the obtained backlight value.",
+        )))
     }
 
     fn machine(&self) -> Result<String, ReadoutError> {
@@ -312,7 +314,7 @@ impl GeneralReadout for NetBSDGeneralReadout {
         Err(ReadoutError::MetricNotAvailable)
     }
 
-    fn disk_space(&self) -> Result<(AdjustedByte, AdjustedByte), ReadoutError> {
+    fn disk_space(&self) -> Result<(u128, u128), ReadoutError> {
         let mut s: std::mem::MaybeUninit<libc::statvfs> = std::mem::MaybeUninit::uninit();
         let path = CString::new("/").expect("Could not create C string for disk usage path.");
 
@@ -322,12 +324,10 @@ impl GeneralReadout for NetBSDGeneralReadout {
             let disk_size = stats.f_blocks * stats.f_bsize as u64;
             let free = stats.f_bavail * stats.f_bsize as u64;
 
-            let used_byte =
-                byte_unit::Byte::from_bytes((disk_size - free) as u128).get_appropriate_unit(true);
-            let disk_size_byte = byte_unit::Byte::from_bytes(disk_size as u128)
-                .get_adjusted_unit(used_byte.get_unit());
+            let used = (disk_size - free) as u128;
+            let total = disk_size as u128;
 
-            return Ok((used_byte, disk_size_byte));
+            return Ok((used, total));
         }
 
         Err(ReadoutError::Other(String::from(

@@ -371,7 +371,7 @@ impl GeneralReadout for MacOSGeneralReadout {
         Ok(format!("{} {} {}", name, version, major_version_name))
     }
 
-    fn disk_space(&self) -> Result<(AdjustedByte, AdjustedByte), ReadoutError> {
+    fn disk_space(&self) -> Result<(u128, u128), ReadoutError> {
         crate::shared::disk_space(String::from("/"))
     }
 }
