@@ -410,7 +410,7 @@ pub trait GeneralReadout {
     /// specified interface.
     ///
     /// _e.g._ `192.168.1.11`
-    fn local_ip(&self, interface: Option<String>) -> Result<String, ReadoutError> {
+    fn local_ip(&self, _interface: Option<String>) -> Result<String, ReadoutError> {
         Err(STANDARD_NO_IMPL.clone())
     }
 
@@ -454,7 +454,7 @@ pub trait GeneralReadout {
     _e.g._ /bin/bash, /bin/zsh, etc.
     */
 
-    fn shell(&self, _shorthand: ShellFormat, kind: ShellKind) -> Result<String, ReadoutError> {
+    fn shell(&self, _shorthand: ShellFormat, _kind: ShellKind) -> Result<String, ReadoutError> {
         Err(STANDARD_NO_IMPL.clone())
     }
 
