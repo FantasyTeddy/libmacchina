@@ -267,12 +267,16 @@ impl GeneralReadout for LinuxGeneralReadout {
         Ok(content.name)
     }
 
-    fn local_ip(&self) -> Result<String, ReadoutError> {
-        crate::shared::local_ip()
+    fn local_ip(&self, interface: Option<String>) -> Result<String, ReadoutError> {
+        crate::shared::local_ip(interface)
     }
 
     fn desktop_environment(&self) -> Result<String, ReadoutError> {
         crate::shared::desktop_environment()
+    }
+
+    fn session(&self) -> Result<String, ReadoutError> {
+        crate::shared::session()
     }
 
     fn window_manager(&self) -> Result<String, ReadoutError> {
@@ -312,17 +316,13 @@ impl GeneralReadout for LinuxGeneralReadout {
                 .join(terminal_pid.to_string())
                 .join("comm");
 
-            // Any command_name we find that matches
-            // one of the elements within this table
-            // is effectively ignored
-            let shells = [
-                "sh", "su", "nu", "bash", "fish", "dash", "tcsh", "zsh", "ksh", "csh",
-            ];
-
             // The below loop will traverse /proc to find the
             // terminal inside of which the user is operating
             if let Ok(mut terminal_name) = fs::read_to_string(path) {
-                while shells.contains(&terminal_name.replace("\n", "").as_str()) {
+                // Any command_name we find that matches
+                // one of the elements within this table
+                // is effectively ignored
+                while extra::common_shells().contains(&terminal_name.replace("\n", "").as_str()) {
                     let ppid = get_parent(terminal_pid);
                     terminal_pid = ppid;
 
@@ -402,6 +402,13 @@ impl GeneralReadout for LinuxGeneralReadout {
         let family = product_readout.family()?;
         let version = product_readout.version()?;
         let vendor = product_readout.vendor()?;
+
+        // If one field is generic, the others are likely the same, so fail the readout.
+        if vendor.to_lowercase() == "system manufacturer".to_lowercase() {
+            return Err(ReadoutError::Other(String::from(
+                "Your manufacturer may have not specified your machine's product information.",
+            )));
+        }
 
         let product = format!("{} {} {} {}", vendor, family, name, version)
             .replace("To be filled by O.E.M.", "");
@@ -525,36 +532,45 @@ impl PackageReadout for LinuxPackageReadout {
         // Instead of having a condition for each distribution.
         // we will try and extract package count by checking
         // if a certain package manager is installed
+
+        // It might seem weird that we're using `if` rather than `else if`
+        // but there are some people who have multiple
+        // distribution-specific package managers installed
         if extra::which("pacman") {
             if let Some(c) = LinuxPackageReadout::count_pacman() {
                 packages.push((PackageManager::Pacman, c));
             }
-        } else if extra::which("dpkg") {
+        }
+        if extra::which("dpkg") {
             if let Some(c) = LinuxPackageReadout::count_dpkg() {
                 packages.push((PackageManager::Dpkg, c));
             }
-        } else if extra::which("qlist") {
+        }
+        if extra::which("qlist") {
             if let Some(c) = LinuxPackageReadout::count_portage() {
                 packages.push((PackageManager::Portage, c));
             }
-        } else if extra::which("xbps-query") {
+        }
+        if extra::which("xbps-query") {
             if let Some(c) = LinuxPackageReadout::count_xbps() {
                 packages.push((PackageManager::Xbps, c));
             }
-        } else if extra::which("rpm") {
+        }
+        if extra::which("rpm") {
             if let Some(c) = LinuxPackageReadout::count_rpm() {
                 packages.push((PackageManager::Rpm, c));
             }
-        } else if extra::which("eopkg") {
+        }
+        if extra::which("eopkg") {
             if let Some(c) = LinuxPackageReadout::count_eopkg() {
                 packages.push((PackageManager::Eopkg, c));
             }
-        } else if extra::which("apk") {
+        }
+        if extra::which("apk") {
             if let Some(c) = LinuxPackageReadout::count_apk() {
                 packages.push((PackageManager::Apk, c));
             }
         }
-
         if extra::which("cargo") {
             if let Some(c) = LinuxPackageReadout::count_cargo() {
                 packages.push((PackageManager::Cargo, c));
@@ -568,6 +584,11 @@ impl PackageReadout for LinuxPackageReadout {
         if extra::which("snap") {
             if let Some(c) = LinuxPackageReadout::count_snap() {
                 packages.push((PackageManager::Snap, c));
+            }
+        }
+        if extra::which("brew") {
+            if let Some(c) = LinuxPackageReadout::count_homebrew() {
+                packages.push((PackageManager::Homebrew, c));
             }
         }
 
@@ -604,7 +625,7 @@ impl LinuxPackageReadout {
         let pacman_dir = Path::new("/var/lib/pacman/local");
         if pacman_dir.exists() {
             if let Ok(read_dir) = read_dir(pacman_dir) {
-                return Some(read_dir.count() - 1);
+                return Some(read_dir.count());
             };
         }
 
@@ -617,7 +638,7 @@ impl LinuxPackageReadout {
         let eopkg_dir = Path::new("/var/lib/eopkg/package");
         if eopkg_dir.exists() {
             if let Ok(read_dir) = read_dir(eopkg_dir) {
-                return Some(read_dir.count() - 1);
+                return Some(read_dir.count());
             };
         }
 
@@ -643,6 +664,53 @@ impl LinuxPackageReadout {
                     .into_iter()
                     .count(),
             );
+        }
+
+        None
+    }
+
+    /// Returns the number of installed packages for systems
+    /// that have `homebrew` installed.
+    fn count_homebrew() -> Option<usize> {
+        if let Ok(home_dir) = std::env::var("HOME") {
+            let linuxbrew = PathBuf::from(home_dir).join(".linuxbrew");
+            if linuxbrew.exists() {
+                let cellar_count = match read_dir(linuxbrew.join("Cellar")) {
+                    Ok(read_dir) => read_dir
+                        .filter(|x| {
+                            if let Ok(entry) = x {
+                                if entry.path().ends_with(".keepme") {
+                                    return false;
+                                }
+
+                                return true;
+                            }
+
+                            return false;
+                        })
+                        .count(),
+                    Err(_) => 0,
+                };
+
+                let global_count = match read_dir(linuxbrew) {
+                    Ok(read_dir) => read_dir
+                        .filter(|x| {
+                            if let Ok(entry) = x {
+                                if entry.path().is_dir() {
+                                    return false;
+                                }
+
+                                return true;
+                            }
+
+                            return false;
+                        })
+                        .count(),
+                    Err(_) => 0,
+                };
+
+                return Some(cellar_count + global_count);
+            }
         }
 
         None

@@ -262,8 +262,8 @@ impl GeneralReadout for MacOSGeneralReadout {
         )))
     }
 
-    fn local_ip(&self) -> Result<String, ReadoutError> {
-        crate::shared::local_ip()
+    fn local_ip(&self, interface: Option<String>) -> Result<String, ReadoutError> {
+        crate::shared::local_ip(interface)
     }
 
     fn desktop_environment(&self) -> Result<String, ReadoutError> {
@@ -558,6 +558,7 @@ impl MacOSPackageReadout {
         use std::fs::read_dir;
         use std::path::Path;
 
+        // Homebrew stores packages in /usr/local on older-generation Apple hardware.
         let homebrew_root = Path::new("/usr/local");
         let cellar_folder = homebrew_root.join("Cellar");
         let caskroom_folder = homebrew_root.join("Caskroom");
@@ -572,7 +573,22 @@ impl MacOSPackageReadout {
             Err(_) => 0,
         };
 
-        Some(cellar_count + caskroom_count)
+        // Homebrew stores packages in /opt/homebrew on Apple Silicon machines.
+        let opt_homebrew_root = Path::new("/opt/homebrew");
+        let opt_cellar_folder = opt_homebrew_root.join("Cellar");
+        let opt_caskroom_folder = opt_homebrew_root.join("Caskroom");
+
+        let opt_cellar_count = match read_dir(opt_cellar_folder) {
+            Ok(read_dir) => read_dir.count(),
+            Err(_) => 0,
+        };
+
+        let opt_caskroom_count = match read_dir(opt_caskroom_folder) {
+            Ok(read_dir) => read_dir.count(),
+            Err(_) => 0,
+        };
+
+        Some(cellar_count + caskroom_count + opt_cellar_count + opt_caskroom_count)
     }
 
     fn count_cargo() -> Option<usize> {

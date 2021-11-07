@@ -4,6 +4,8 @@
 use crate::traits::{ReadoutError, ShellFormat, ShellKind};
 
 use crate::extra;
+use crate::winman::*;
+use std::fs::read_dir;
 use std::fs::read_to_string;
 use std::io::Error;
 use std::path::Path;
@@ -12,6 +14,7 @@ use std::{env, fs};
 use std::{ffi::CStr, path::PathBuf};
 
 use byte_unit::AdjustedByte;
+use if_addrs;
 use std::ffi::CString;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "android"))]
 use sysctl::SysctlError;
@@ -29,7 +32,7 @@ impl From<std::io::Error> for ReadoutError {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "netbsd", target_os = "android"))]
+#[cfg(not(any(target_os = "freebsd", target_os = "macos", target_os = "windows")))]
 pub(crate) fn uptime() -> Result<usize, ReadoutError> {
     let uptime_file_text = fs::read_to_string("/proc/uptime")?;
     let uptime_text = uptime_file_text.split_whitespace().next().unwrap();
@@ -44,9 +47,9 @@ pub(crate) fn uptime() -> Result<usize, ReadoutError> {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "netbsd", target_os = "android"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub(crate) fn desktop_environment() -> Result<String, ReadoutError> {
-    let desktop_env = env::var("DESKTOP_SESSION").or_else(|_| env::var("XDG_CURRENT_DESKTOP"));
+    let desktop_env = env::var("XDG_CURRENT_DESKTOP").or_else(|_| env::var("DESKTOP_SESSION"));
     match desktop_env {
         Ok(de) => {
             if de.to_lowercase() == "xinitrc" {
@@ -63,49 +66,41 @@ pub(crate) fn desktop_environment() -> Result<String, ReadoutError> {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "netbsd", target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "macos", target_os = "windows")))]
+pub(crate) fn session() -> Result<String, ReadoutError> {
+    match env::var("XDG_SESSION_TYPE") {
+        Ok(s) => Ok(extra::ucfirst(s)),
+        Err(_) => Err(ReadoutError::Other(
+            "No graphical session detected.".to_string(),
+        )),
+    }
+}
+
+#[cfg(not(any(target_os = "android", target_os = "macos", target_os = "windows")))]
 pub(crate) fn window_manager() -> Result<String, ReadoutError> {
-    if extra::which("wmctrl") {
-        let wmctrl = Command::new("wmctrl")
-            .arg("-m")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("ERROR: failed to spawn \"wmctrl\" process");
+    match session() {
+        Ok(s) => {
+            if s == "Wayland" {
+                let winman_name = match detect_wayland_window_manager() {
+                    Ok(w) => Ok(w),
+                    Err(e) => Err(e),
+                };
 
-        let wmctrl_out = wmctrl
-            .stdout
-            .expect("ERROR: failed to open \"wmctrl\" stdout");
+                return winman_name;
+            } else if s == "X11" {
+                let winman_name = match detect_xorg_window_manager() {
+                    Ok(w) => Ok(w),
+                    Err(e) => Err(e),
+                };
 
-        let head = Command::new("head")
-            .args(&["-n", "1"])
-            .stdin(Stdio::from(wmctrl_out))
-            .stdout(Stdio::piped())
-            .spawn()
-            .expect("ERROR: failed to spawn \"head\" process");
+                return winman_name;
+            }
 
-        let output = head
-            .wait_with_output()
-            .expect("ERROR: failed to wait for \"head\" process to exit");
-
-        let window_manager = String::from_utf8(output.stdout)
-            .expect("ERROR: \"wmctrl -m | head -n1\" process stdout was not valid UTF-8");
-
-        let window_man_name =
-            extra::pop_newline(String::from(window_manager.replace("Name:", "").trim()));
-
-        if window_man_name == "N/A" || window_man_name.is_empty() {
-            return Err(ReadoutError::Other(format!(
-                "Window manager not available — it could that it is not EWMH-compliant."
-            )));
+            Err(ReadoutError::MetricNotAvailable)
         }
 
-        return Ok(window_man_name);
+        Err(e) => return Err(e),
     }
-
-    Err(ReadoutError::Other(
-        "\"wmctrl\" must be installed to display your window manager.".to_string(),
-    ))
 }
 
 #[cfg(target_family = "unix")]
@@ -183,7 +178,7 @@ pub(crate) fn shell(shorthand: ShellFormat, kind: ShellKind) -> Result<String, R
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "netbsd", target_os = "android"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub(crate) fn cpu_model_name() -> String {
     use std::io::{BufRead, BufReader};
     let file = fs::File::open("/proc/cpuinfo");
@@ -205,7 +200,7 @@ pub(crate) fn cpu_model_name() -> String {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "netbsd"))]
+#[cfg(any(target_os = "freebsd", target_os = "macos", target_os = "netbsd"))]
 pub(crate) fn cpu_usage() -> Result<usize, ReadoutError> {
     let nelem: i32 = 1;
     let mut value: f64 = 0.0;
@@ -241,7 +236,7 @@ pub(crate) fn disk_space(path: String) -> Result<(u128, u128), ReadoutError> {
         let stats: libc::statfs = unsafe { s.assume_init() };
 
         let disk_size = stats.f_blocks * stats.f_bsize as u64;
-        let free = stats.f_bavail * stats.f_bsize as u64;
+        let free = stats.f_bavail as u64 * stats.f_bsize as u64;
 
         let used = (disk_size - free) as u128;
         let total = disk_size as u128;
@@ -255,7 +250,7 @@ pub(crate) fn disk_space(path: String) -> Result<(u128, u128), ReadoutError> {
 }
 
 /// Obtain the value of a specified field from `/proc/meminfo` needed to calculate memory usage
-#[cfg(any(target_os = "linux", target_os = "netbsd", target_os = "android"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub(crate) fn get_meminfo_value(value: &str) -> u64 {
     use std::io::{BufRead, BufReader};
     let file = fs::File::open("/proc/meminfo");
@@ -274,25 +269,44 @@ pub(crate) fn get_meminfo_value(value: &str) -> u64 {
     }
 }
 
-pub(crate) fn local_ip() -> Result<String, ReadoutError> {
-    if let Some(s) = local_ipaddress::get() {
-        Ok(s)
-    } else {
-        Err(ReadoutError::Other(String::from(
+pub(crate) fn local_ip(interface: Option<String>) -> Result<String, ReadoutError> {
+    if let Some(it) = interface {
+        if let Ok(addresses) = if_addrs::get_if_addrs() {
+            for iface in addresses {
+                if iface.name.to_lowercase() == it.to_lowercase() {
+                    return Ok(iface.addr.ip().to_string());
+                }
+            }
+        }
+
+        return Err(ReadoutError::Other(String::from(
             "Unable to get local IP address.",
-        )))
-    }
+        )));
+    };
+
+    return Err(ReadoutError::Other(String::from(
+            "Please specify a network interface to query (e.g. `interface = \"wlan0\"` in macchina.toml)."
+        )));
 }
 
 pub(crate) fn count_cargo() -> Option<usize> {
-    use std::fs::read_dir;
     if let Ok(cargo_home) = std::env::var("CARGO_HOME") {
-        let cargo_bin = PathBuf::from(cargo_home).join("bin");
-        if cargo_bin.exists() {
-            if let Ok(read_dir) = read_dir(cargo_bin) {
+        let bin = PathBuf::from(cargo_home).join("bin");
+        if bin.exists() {
+            if let Ok(read_dir) = read_dir(bin) {
                 return Some(read_dir.count());
             }
         }
+    }
+
+    if let Ok(home) = std::env::var("HOME") {
+        let bin = PathBuf::from(home).join(".cargo").join("bin");
+        if bin.exists() {
+            if let Ok(read_dir) = read_dir(bin) {
+                return Some(read_dir.count());
+            }
+        }
+
         return None;
     }
     None

@@ -3,7 +3,7 @@
 
 A library providing access to all sorts of system information.
 
-Linux • macOS • Windows • NetBSD • Android • OpenWrt
+Linux • macOS • Windows • NetBSD • FreeBSD • Android • OpenWrt
 
 <a href="https://crates.io/crates/libmacchina">
     <img src="https://img.shields.io/crates/v/libmacchina" alt="version" />
@@ -20,7 +20,7 @@ Linux • macOS • Windows • NetBSD • Android • OpenWrt
 Add the following to your project's _Cargo.toml_ file:
 
 ```toml
-libmacchina = "2.1.4"
+libmacchina = "3"
 ```
 
 ### Examples

@@ -406,10 +406,11 @@ pub trait GeneralReadout {
         Err(STANDARD_NO_IMPL.clone())
     }
 
-    /// This function should return the user's local ip address
+    /// This function should return the user's local ip address of the
+    /// specified interface.
     ///
     /// _e.g._ `192.168.1.11`
-    fn local_ip(&self) -> Result<String, ReadoutError> {
+    fn local_ip(&self, interface: Option<String>) -> Result<String, ReadoutError> {
         Err(STANDARD_NO_IMPL.clone())
     }
 
@@ -417,6 +418,13 @@ pub trait GeneralReadout {
     ///
     /// _e.g._ `Plasma`
     fn desktop_environment(&self) -> Result<String, ReadoutError> {
+        Err(STANDARD_NO_IMPL.clone())
+    }
+
+    /// This function should return the type of session that's in use.
+    ///
+    /// _e.g._ `Wayland`
+    fn session(&self) -> Result<String, ReadoutError> {
         Err(STANDARD_NO_IMPL.clone())
     }
 
@@ -547,6 +555,7 @@ pub enum PackageManager {
     Flatpak,
     Snap,
     Android,
+    Pkg,
 }
 
 impl ToString for PackageManager {
@@ -567,6 +576,7 @@ impl ToString for PackageManager {
             PackageManager::Flatpak => "flatpak",
             PackageManager::Snap => "snap",
             PackageManager::Android => "Android",
+            PackageManager::Pkg => "pkg",
         })
     }
 }

@@ -6,6 +6,7 @@ use nix::unistd;
 use regex::Regex;
 use std::ffi::CString;
 use std::fs;
+use std::fs::read_dir;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
@@ -117,7 +118,9 @@ impl KernelReadout for NetBSDKernelReadout {
     }
 
     fn pretty_kernel(&self) -> Result<String, ReadoutError> {
-        Err(ReadoutError::MetricNotAvailable)
+        Err(ReadoutError::Warning(String::from(
+            "This information is provided by the OperatingSystem readout on NetBSD.",
+        )))
     }
 }
 
@@ -145,7 +148,7 @@ impl GeneralReadout for NetBSDGeneralReadout {
             )));
         }
 
-        if let Ok(val) = backlight.parse::<usize>() {
+        if let Ok(val) = extra::pop_newline(backlight).parse::<usize>() {
             return Ok(val);
         }
 
@@ -173,8 +176,8 @@ impl GeneralReadout for NetBSDGeneralReadout {
         Ok(new_product.into_iter().join(" "))
     }
 
-    fn local_ip(&self) -> Result<String, ReadoutError> {
-        crate::shared::local_ip()
+    fn local_ip(&self, interface: Option<String>) -> Result<String, ReadoutError> {
+        crate::shared::local_ip(interface)
     }
 
     fn username(&self) -> Result<String, ReadoutError> {
@@ -197,12 +200,16 @@ impl GeneralReadout for NetBSDGeneralReadout {
 
     fn distribution(&self) -> Result<String, ReadoutError> {
         Err(ReadoutError::Warning(String::from(
-            "Since you're on NetBSD, there is no distribution to be read from the system.",
+            "This information is provided by the OperatingSystem readout on NetBSD.",
         )))
     }
 
     fn desktop_environment(&self) -> Result<String, ReadoutError> {
         crate::shared::desktop_environment()
+    }
+
+    fn session(&self) -> Result<String, ReadoutError> {
+        crate::shared::session()
     }
 
     fn window_manager(&self) -> Result<String, ReadoutError> {
@@ -236,18 +243,15 @@ impl GeneralReadout for NetBSDGeneralReadout {
                 .join(terminal_pid.to_string())
                 .join("status");
 
-            // Any command_name we find that matches
-            // one of the elements within this table
-            // is effectively ignored
-            let shells = [
-                "sh", "su", "nu", "bash", "fish", "dash", "tcsh", "zsh", "ksh", "csh",
-            ];
-
             // The below loop will traverse /proc to find the
             // terminal inside of which the user is operating
             if let Ok(mut terminal_name) = fs::read_to_string(path) {
                 terminal_name = terminal_name.split_whitespace().next().unwrap().to_owned();
-                while shells.contains(&terminal_name.as_str()) {
+
+                // Any command_name we find that matches
+                // one of the elements within this table
+                // is effectively ignored
+                while extra::common_shells().contains(&terminal_name.as_str()) {
                     let ppid = get_parent(terminal_pid);
                     terminal_pid = ppid;
 
@@ -429,15 +433,19 @@ impl PackageReadout for NetBSDPackageReadout {
 
 impl NetBSDPackageReadout {
     fn count_pkgin() -> Option<usize> {
-        let pkg_info = Command::new("pkg_info")
-            .stdout(Stdio::piped())
-            .output()
-            .unwrap();
+        if let Some(pkg_dbdir) = extra::pkgdb_dir() {
+            if let Ok(read_dir) = read_dir(pkg_dbdir) {
+                return Some(read_dir.count() - 1);
+            };
+        }
 
-        extra::count_lines(
-            String::from_utf8(pkg_info.stdout)
-                .expect("ERROR: \"pkg_info\" output was not valid UTF-8"),
-        )
+        if let Some(localbase_dir) = extra::localbase_dir() {
+            if let Ok(read_dir) = read_dir(localbase_dir.join("pkgdb")) {
+                return Some(read_dir.count() - 1);
+            }
+        }
+
+        None
     }
 
     fn count_cargo() -> Option<usize> {
